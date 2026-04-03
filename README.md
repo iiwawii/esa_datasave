@@ -25,7 +25,7 @@
 
 启动安装好的VISA后端软件（**Keysight Connection Expert**）并确认连接正确，visa地址正确：
 
-![本地截图](.\images\image.png "VISA后端示例")
+![本地截图](images/image.png "VISA后端示例")
 
 本项目给后续使用者的推荐方式是直接运行打包好的可执行文件：
 
@@ -34,7 +34,7 @@
 运行后会弹出一个简单界面，需要填写以下内容：
 
 - 保存路径：本地电脑上用于保存 `csv` 文件的文件夹路径（建议直接在地址框复制）
-  ![alt text](.\images\image-1.png)
+  ![alt text](images/image-1.png)
 - 文件名：导出的文件名，不需要手动输入 `.csv`
 
 填写完成后，点击界面中的执行按钮，程序会自动：
