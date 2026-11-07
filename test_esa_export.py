@@ -9,6 +9,8 @@ from esa_export import DEFAULT_ADDRESS, check_connection, csv_payload, export_tr
 PAYLOAD = b"Model:,E4407B\r\n,Trace 1\r\nHz,dBm\r\n0.000,-80.00\r\n"
 SIZE = str(len(PAYLOAD)).encode()
 BLOCK = b"#" + str(len(SIZE)).encode() + SIZE + PAYLOAD + b"\n"
+REMOTE_PATH = r"C:\AB12CD34.CSV"
+DELETE = f":MMEM:DEL '{REMOTE_PATH}'"
 
 
 class ExportTests(unittest.TestCase):
@@ -32,6 +34,9 @@ class ExportTests(unittest.TestCase):
         }[command]
         self.instrument.read_raw.return_value = BLOCK
         self.report = MagicMock()
+        token = patch("esa_export.token_hex", return_value="ab12cd34")
+        token.start()
+        self.addCleanup(token.stop)
 
     def test_output_path_accepts_unicode_and_optional_extension(self):
         self.assertEqual(output_path(str(self.folder), "实验 1.CSV"), self.target)
@@ -46,36 +51,46 @@ class ExportTests(unittest.TestCase):
             check_connection(DEFAULT_ADDRESS)
         self.session.__exit__.assert_called_once()
 
-    def test_export_keeps_instrument_bytes_and_uses_matching_remote_path(self):
-        remote_path = export_trace(DEFAULT_ADDRESS, self.target, self.report)
-        self.assertRegex(remote_path, r"^C:\\[0-9A-F]{8}\.CSV$")
+    def test_export_keeps_instrument_bytes_and_deletes_only_after_publish(self):
+        def write(command):
+            if command == DELETE:
+                self.assertEqual(self.target.read_bytes(), PAYLOAD)
+
+        self.instrument.write.side_effect = write
+        self.assertIsNone(export_trace(DEFAULT_ADDRESS, self.target, self.report))
         self.assertEqual(self.target.read_bytes(), PAYLOAD)
         self.assertEqual(list(self.folder.iterdir()), [self.target])
         self.assertEqual(
             [(call[0], call.args) for call in self.instrument.method_calls],
             [
                 ("query", ("*IDN?",)),
-                ("write", (f":MMEM:STOR:TRAC TRACE1,'{remote_path}'",)),
+                ("write", (f":MMEM:STOR:TRAC TRACE1,'{REMOTE_PATH}'",)),
                 ("query", ("*OPC?",)),
                 ("query", (":SYST:ERR?",)),
-                ("write", (f":MMEMory:DATA? '{remote_path}'",)),
+                ("write", (f":MMEMory:DATA? '{REMOTE_PATH}'",)),
                 ("read_raw", ()),
+                ("write", (DELETE,)),
+                ("query", ("*OPC?",)),
+                ("query", (":SYST:ERR?",)),
             ],
         )
         self.session.__exit__.assert_called_once()
 
     def test_instrument_error_blocks_readback_and_leaves_no_local_file(self):
         self.instrument.query.side_effect = ["Agilent,E4407B,123,A.14.06", "1", '-250,"Mass storage error"']
-        with self.assertRaisesRegex(ValueError, "Mass storage error"):
+        with self.assertRaisesRegex(RuntimeError, "Mass storage error"):
             export_trace(DEFAULT_ADDRESS, self.target, self.report)
         self.instrument.read_raw.assert_not_called()
+        self.assertNotIn((DELETE,), [call.args for call in self.instrument.write.call_args_list])
         self.assertEqual(list(self.folder.iterdir()), [])
         self.session.__exit__.assert_called_once()
 
     def test_truncated_response_leaves_no_local_file(self):
         self.instrument.read_raw.return_value = BLOCK[:-3]
-        with self.assertRaises(ValueError):
+        with self.assertRaisesRegex(RuntimeError, "可能保留临时文件") as failure:
             export_trace(DEFAULT_ADDRESS, self.target, self.report)
+        self.assertIn(REMOTE_PATH, str(failure.exception))
+        self.assertNotIn((DELETE,), [call.args for call in self.instrument.write.call_args_list])
         self.assertEqual(list(self.folder.iterdir()), [])
 
     def test_existing_file_is_preserved(self):
@@ -91,10 +106,20 @@ class ExportTests(unittest.TestCase):
             return BLOCK
 
         self.instrument.read_raw.side_effect = read
-        with self.assertRaises(FileExistsError):
+        with self.assertRaisesRegex(RuntimeError, "可能保留临时文件"):
             export_trace(DEFAULT_ADDRESS, self.target, self.report)
         self.assertEqual(self.target.read_bytes(), b"created elsewhere")
         self.assertEqual(list(self.folder.iterdir()), [self.target])
+        self.assertNotIn((DELETE,), [call.args for call in self.instrument.write.call_args_list])
+
+    def test_cleanup_error_preserves_csv_and_reports_instrument_path(self):
+        self.instrument.query.side_effect = [
+            "Agilent,E4407B,123,A.14.06", "1", '+0,"No error"', "1", '-250,"Delete failed"',
+        ]
+        warning = export_trace(DEFAULT_ADDRESS, self.target, self.report)
+        self.assertIn(REMOTE_PATH, warning)
+        self.assertIn("Delete failed", warning)
+        self.assertEqual(self.target.read_bytes(), PAYLOAD)
 
     def test_invalid_and_truncated_block_headers(self):
         for reply in (b"", b"#", b"#0abc", b"#91", b"#2ab", b"#19abc", b"#13abcgarbage"):

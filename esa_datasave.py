@@ -20,6 +20,7 @@ NAVY = "#122943"
 BLUE = "#1260a8"
 GREEN = "#166247"
 RED = "#a32732"
+AMBER = "#8a540e"
 BORDER = "#ccd7e3"
 
 
@@ -80,6 +81,9 @@ class ExportApp:
 
         body = tk.Frame(self.root, background=BACKGROUND, padx=22, pady=13)
         body.pack(fill="both", expand=True)
+        actions = tk.Frame(body, background=BACKGROUND)
+        actions.pack(side="bottom", fill="x", pady=(0, 2))
+
         connection = self.card(body, "01   仪器连接")
         self.field(connection, 1, "VISA 地址", self.address, "测试连接", self.test_connection)
         self.label(connection, textvariable=self.device, color=MUTED).grid(
@@ -100,8 +104,6 @@ class ExportApp:
         self.progress = ttk.Progressbar(status, mode="determinate", value=0)
         self.progress.grid(row=3, column=0, columnspan=3, sticky="ew")
 
-        actions = tk.Frame(body, background=BACKGROUND)
-        actions.pack(fill="x", pady=(0, 2))
         self.folder_button = ttk.Button(actions, text="打开保存目录", command=self.open_folder)
         self.folder_button.pack(side="left")
         self.folder_button.state(["disabled"])
@@ -190,7 +192,9 @@ class ExportApp:
                 self.busy = False
                 self.progress.stop()
                 failed = stage == "操作失败"
-                self.status_label.configure(foreground=RED if failed else GREEN)
+                has_warning = stage == "已保存，有清理提示"
+                color = RED if failed else AMBER if has_warning else GREEN
+                self.status_label.configure(foreground=color)
                 self.progress.configure(
                     mode="determinate",
                     style="Horizontal.TProgressbar" if failed else "Success.Horizontal.TProgressbar",
@@ -207,6 +211,8 @@ class ExportApp:
                     self.folder_button.state(["!disabled"])
                 if failed:
                     messagebox.showerror(stage, detail, parent=self.root)
+                elif has_warning:
+                    messagebox.showwarning(stage, detail, parent=self.root)
         except Empty:
             pass
         self.root.after(75, self.poll_events)
@@ -246,8 +252,10 @@ class ExportApp:
             return
 
         def operation():
-            remote_path = export_trace(address, target, lambda text: self.events.put(("progress", text)))
-            return "导出完成", f"{target}\n仪器端文件：{remote_path}", None, target.parent
+            warning = export_trace(address, target, lambda text: self.events.put(("progress", text)))
+            if warning:
+                return "已保存，有清理提示", f"{target}\n{warning}", None, target.parent
+            return "导出完成", f"{target}\n仪器端临时文件已清理。", None, target.parent
 
         self.start("导出 TRACE1", operation)
 

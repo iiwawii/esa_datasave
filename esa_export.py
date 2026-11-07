@@ -61,38 +61,67 @@ def csv_payload(reply):
     return reply[header_end:end]
 
 
+def check_instrument_operation(instrument):
+    if instrument.query("*OPC?").strip() != "1":
+        raise ValueError("仪器未确认操作完成。")
+    response = instrument.query(":SYST:ERR?").strip()
+    code, _, _ = response.partition(",")
+    if code.strip() not in {"0", "+0"}:
+        raise ValueError(f"仪器错误队列返回：{response or '空响应'}")
+
+
+def publish_csv(pending, target, payload):
+    with pending.open("wb") as file:
+        file.write(payload)
+        file.flush()
+        os.fsync(file.fileno())
+    if os.name == "nt":
+        pending.rename(target)  # Windows rename fails if the destination exists.
+    else:
+        os.link(pending, target)
+
+
 def export_trace(address, target, report):
-    """Export TRACE1 and publish a complete local CSV without replacing a file."""
+    """Publish a complete local CSV, then return any instrument cleanup warning."""
     if target.exists():
         raise FileExistsError(f"本地文件已存在，请更换文件名：{target.name}")
-    # ESA instrument names are limited to eight letters or digits.
-    remote_path = f"C:\\{token_hex(4).upper()}.CSV"
     pending = None
+    remote_path = None
+    local_saved = False
+    warning = None
     try:
         with NamedTemporaryFile(dir=target.parent, prefix=".esa-", suffix=".tmp", delete=False) as file:
             pending = Path(file.name)
-            report("正在连接 E4407B…")
-            with pyvisa.ResourceManager() as manager:
-                with manager.open_resource(address) as instrument:
-                    instrument_id(instrument)
-                    report(f"正在将 TRACE1 保存到仪器 {remote_path}…")
-                    instrument.write(f":MMEM:STOR:TRAC TRACE1,'{remote_path}'")
-                    if instrument.query("*OPC?").strip() != "1":
-                        raise ValueError("仪器未确认写入操作完成。")
-                    response = instrument.query(":SYST:ERR?").strip()
-                    code, _, _ = response.partition(",")
-                    if code.strip() not in {"0", "+0"}:
-                        raise ValueError(f"仪器错误队列返回：{response or '空响应'}")
-                    report("正在读回仪器文件…")
-                    instrument.write(f":MMEMory:DATA? '{remote_path}'")
-                    payload = csv_payload(instrument.read_raw())
+        report("正在连接 E4407B…")
+        with pyvisa.ResourceManager() as manager, manager.open_resource(address) as instrument:
+            instrument_id(instrument)
+            # ESA instrument names are limited to eight letters or digits.
+            remote_path = f"C:\\{token_hex(4).upper()}.CSV"
+            report(f"正在将 TRACE1 保存到仪器 {remote_path}…")
+            instrument.write(f":MMEM:STOR:TRAC TRACE1,'{remote_path}'")
+            check_instrument_operation(instrument)
+            report("正在读回仪器文件…")
+            instrument.write(f":MMEMory:DATA? '{remote_path}'")
+            payload = csv_payload(instrument.read_raw())
             report("正在写入本地 CSV…")
-            file.write(payload)
-        if os.name == "nt":
-            pending.rename(target)  # Windows rename fails if the destination exists.
+            publish_csv(pending, target, payload)
+            local_saved = True
+
+            report("本地 CSV 已保存，正在清理仪器端临时文件…")
+            try:
+                instrument.write(f":MMEM:DEL '{remote_path}'")
+                check_instrument_operation(instrument)
+            except Exception as error:
+                warning = f"未能确认仪器端临时文件已删除：{remote_path}\n{error}"
+    except Exception as error:
+        if local_saved:
+            release_warning = f"关闭仪器连接时发生错误：{error}"
+            warning = f"{warning}\n{release_warning}" if warning else release_warning
+        elif remote_path:
+            raise RuntimeError(f"{error}\n仪器端可能保留临时文件：{remote_path}") from error
         else:
-            os.link(pending, target)
+            raise
     finally:
         if pending is not None:
             pending.unlink(missing_ok=True)
-    return remote_path
+    return warning
