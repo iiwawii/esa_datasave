@@ -1,2 +1,5 @@
 *.exe
 *.pdf
+__pycache__/
+.build/
+out/
