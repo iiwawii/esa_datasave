@@ -2,9 +2,12 @@
 
 在 Windows 上导出 Agilent ESA E4407B 频谱仪的 `TRACE1`。扫描参数在仪器面板上设置，程序将仪器生成的迹线 CSV 保存到电脑。
 
-## 从源码启动
+## Windows 快速开始
 
-准备带 Tkinter 的 Python 和可用的 VISA 后端。使用 Keysight IO Libraries Suite 时，可在 Connection Expert 中核对仪器地址。安装入口见 [VISA 后端下载说明](VISA%E5%90%8E%E7%AB%AF/%E4%B8%8B%E8%BD%BD%E8%AF%B4%E6%98%8E.txt)。
+1. 连接 E4407B 并安装可用的 VISA 后端。使用 Keysight IO Libraries Suite 时，可在 Connection Expert 中核对仪器地址。安装入口见 [VISA 后端下载说明](VISA%E5%90%8E%E7%AB%AF/%E4%B8%8B%E8%BD%BD%E8%AF%B4%E6%98%8E.txt)。
+2. 下载并运行 [esa_datasave.exe（Windows x64）](dist/esa_datasave.exe)。
+
+也可以使用带 Tkinter 的 Python，在仓库根目录从源码启动：
 
 ```powershell
 python -m pip install pyvisa
@@ -24,16 +27,16 @@ python esa_datasave.py
 
 ## Windows 打包与测试
 
-仓库里的 `dist/esa_datasave.exe` 是旧版。要生成与当前源码对应的新版程序，在仓库根目录运行：
+如需自行打包，在 Windows 的仓库根目录运行：
 
 ```powershell
-python -m pip install pyinstaller
-python -m PyInstaller --workpath .build --distpath out esa_datasave.spec
+python -m pip install pyvisa pyinstaller
+python -m PyInstaller --onefile --windowed --specpath .build --workpath .build --distpath out esa_datasave.py
 ```
 
-新版生成于 `out/esa_datasave.exe`，运行时仍需要可用的 VISA 后端。
+可执行文件生成于 `out/esa_datasave.exe`。PyInstaller 会在 `.build/` 中生成临时的 `.spec` 和打包中间文件。
 
-运行 `python -m unittest -v` 可用模拟仪器检查命令顺序、传输长度、失败处理和本地文件保护。
+运行 `python -m unittest -v` 可用模拟仪器检查命令顺序、传输长度、失败处理、本地文件保护和仪器端清理。此版本已验证 Windows 程序启动和模拟导出，E4407B 实机读写和自动清理待验证。
 
 ## 问题反馈
 
